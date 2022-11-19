@@ -1,0 +1,5 @@
+sources:
+  "1.12.1":
+    url: "https://github.com/PointCloudLibrary/pcl/releases/download/pcl-1.12.1/source.tar.gz"
+  "1.11.1":
+    url: "https://github.com/PointCloudLibrary/pcl/releases/download/pcl-1.11.1/source.tar.gz"

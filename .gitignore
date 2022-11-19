@@ -1,1 +1,5 @@
 .vscode/
+/build/
+/conanbuildinfo.txt
+/graph_info.json
+/src

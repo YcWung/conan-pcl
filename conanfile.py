@@ -1,22 +1,28 @@
 # -*- coding: utf-8 -*-
 
 import os
+from glob import glob
 
-from conans import ConanFile, CMake, tools
-from conans.errors import ConanInvalidConfiguration
+from conan import ConanFile
+from conan.errors import ConanInvalidConfiguration
+from conan.tools import files
+from conan.tools.files import apply_conandata_patches, export_conandata_patches, get, copy
+from conan.tools.build import check_min_cppstd
+from conan.tools.scm import Version
+from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 
+required_conan_version = ">=1.53.0"
 
 class LibPclConan(ConanFile):
     name = "pcl"
-    version = "1.11.0"  # TODO: change later
+    version = "1.12.1"
     description = (
         "The Point Cloud Library is a standalone, large scale, open project for 2D/3D image and point cloud processing"
     )
     url = "https://github.com/PointCloudLibrary/pcl"
     homepage = "http://www.pointclouds.org/"
     license = "BSD-3-Clause"
-    exports = "CMakeLists.txt"
-    generators = "cmake"
+    # generators = "cmake"
 
     settings = "os", "arch", "compiler", "build_type"
     options = {
@@ -69,11 +75,11 @@ class LibPclConan(ConanFile):
         "fPIC": True,
         # TODO: choose which modules are enabled by default
         "module_2d": True,
-        "module_cuda": True,
+        "module_cuda": False,
         "module_features": True,
         "module_filters": True,
         "module_geometry": True,
-        "module_gpu": True,
+        "module_gpu": False,
         "module_io": True,
         "module_kdtree": True,
         "module_keypoints": True,
@@ -97,7 +103,7 @@ class LibPclConan(ConanFile):
         "with_davidsdk": False,
         "with_dssdk": False,
         "with_ensenso": False,
-        "with_libpng": True,
+        "with_libpng": False,
         "with_libusb": False,  # android has to be false
         "with_opengl": False,  # android has to be false
         "with_openni": False,
@@ -108,17 +114,6 @@ class LibPclConan(ConanFile):
         "with_rssdk": False,
         "with_rssdk2": False,
         "with_vtk": False,
-    }
-
-    _source_subfolder = "source_subfolder"
-    _build_subfolder = "build_subfolder"
-    _cmake = None
-
-    scm = {
-        "type": "git",
-        "subfolder": _source_subfolder,
-        "url": "https://github.com/PointCloudLibrary/pcl.git",
-        "revision": "-".join([name, version]),
     }
 
     def config_options(self):
@@ -162,102 +157,121 @@ class LibPclConan(ConanFile):
 
     def requirements(self):
         # Mandatory requirements
-        self.requires("boost/1.72.0")
-        self.requires("eigen/3.3.7")
-        self.requires("flann/1.9.1")
+        self.requires("boost/1.80.0")
+        self.requires("eigen/3.4.0")
+        self.requires("flann/1.9.2")
 
         # Optional requirements
         if self.options.with_libpng:
-            self.requires("libpng/1.6.37")
+            self.requires("libpng/1.6.38")
         if self.options.with_libusb:
-            self.requires("libusb/1.0.23")
+            self.requires("libusb/1.0.26")
 
         # Module-dependent requirements
         if self.options.module_simulation:
-            self.requires("glew/2.1.0@bincrafters/stable")
+            self.requires("glew/2.2.0")
 
-    def _configure_cmake(self):
-        if self._cmake:
-            return self._cmake
-        self._cmake = CMake(self)
+    def export_sources(self):
+        copy(self, "CMakeLists.txt", src=self.recipe_folder, dst=self.export_sources_folder)
+        export_conandata_patches(self)
 
-        # Adjust linking options
-        self._cmake.definitions["PCL_SHARED_LIBS"] = self.options.shared
-        self._cmake.definitions["PCL_BUILD_WITH_BOOST_DYNAMIC_LINKING_WIN32"] = self.options["boost"].shared
-        self._cmake.definitions["PCL_BUILD_WITH_FLANN_DYNAMIC_LINKING_WIN32"] = self.options["flann"].shared
+    def source(self):
+        get(self, **self.conan_data["sources"][self.version],
+                  destination=self.source_folder, strip_root=True)
+
+    def layout(self):
+        cmake_layout(self, src_folder="src")
+        print("build_type {}".format(self.settings.build_type))
+        self.folders.build = os.path.join("build", str(self.settings.build_type))
+        self.folders.generators = os.path.join(self.folders.build, "generators")
+        self.cpp.source.includedirs = glob("*/include", root_dir=os.path.join(self.recipe_folder, self.folders.source))
+        self.cpp.build.libdirs=[os.path.join(self.folders.source, "lib")]
+        self.cpp.build.bindirs=[os.path.join(self.folders.source, "bin")]
+        self.cpp.build.includedirs=[os.path.join(self.folders.source, "include")]
+        libs = glob("*.lib", root_dir=os.path.join(self.recipe_folder, self.folders.build, self.folders.source, "lib"))
+        libs = [os.path.splitext(n)[0] for n in libs]
+        self.cpp.build.libs=libs
+
+    def generate(self):
+        tc = CMakeToolchain(self)
+        tc.variables["PCL_SRC_DIR"] = self.source_folder.replace("\\", "/")
+        tc.variables["PCL_SHARED_LIBS"] = self.options.shared
+        tc.variables["PCL_BUILD_WITH_BOOST_DYNAMIC_LINKING_WIN32"] = self.options["boost"].shared
+        tc.variables["PCL_BUILD_WITH_FLANN_DYNAMIC_LINKING_WIN32"] = self.options["flann"].shared
+        tc.variables["FLANN_USE_STATIC"] = "OFF" if self.options["flann"].shared else "ON"
         if self.options.with_qhull:
-            self._cmake.definitions["PCL_BUILD_WITH_QHULL_DYNAMIC_LINKING_WIN32"] = self.options["qhull"].shared
+            tc.variables["PCL_BUILD_WITH_QHULL_DYNAMIC_LINKING_WIN32"] = self.options["qhull"].shared
 
         # Do not build extra tooling & options
-        self._cmake.definitions["BUILD_all_in_one_installer"] = False
-        self._cmake.definitions["BUILD_apps"] = False
-        self._cmake.definitions["BUILD_examples"] = False
-        self._cmake.definitions["BUILD_global_tests"] = False
-        self._cmake.definitions["BUILD_tools"] = False
-        self._cmake.definitions["WITH_DOCS"] = False
+        tc.variables["BUILD_all_in_one_installer"] = False
+        tc.variables["BUILD_apps"] = False
+        tc.variables["BUILD_examples"] = False
+        tc.variables["BUILD_global_tests"] = False
+        tc.variables["BUILD_tools"] = False
+        tc.variables["WITH_DOCS"] = False
 
         # Build modules as needed
-        self._cmake.definitions["BUILD_2d"] = self.options.module_2d
-        self._cmake.definitions["BUILD_common"] = True  # Always build at least common
-        self._cmake.definitions["BUILD_CUDA"] = self.options.module_cuda
-        self._cmake.definitions["BUILD_features"] = self.options.module_features
-        self._cmake.definitions["BUILD_filters"] = self.options.module_filters
-        self._cmake.definitions["BUILD_geometry"] = self.options.module_geometry
-        self._cmake.definitions["BUILD_GPU"] = self.options.module_gpu
-        self._cmake.definitions["BUILD_io"] = self.options.module_io
-        self._cmake.definitions["BUILD_kdtree"] = self.options.module_kdtree
-        self._cmake.definitions["BUILD_keypoints"] = self.options.module_keypoints
-        self._cmake.definitions["BUILD_ml"] = self.options.module_ml
-        self._cmake.definitions["BUILD_octree"] = self.options.module_octree
-        self._cmake.definitions["BUILD_outofcore"] = self.options.module_outofcore
-        self._cmake.definitions["BUILD_people"] = self.options.module_people
-        self._cmake.definitions["BUILD_recognition"] = self.options.module_recognition
-        self._cmake.definitions["BUILD_registration"] = self.options.module_registration
-        self._cmake.definitions["BUILD_sample_consensus"] = self.options.module_sample_consensus
-        self._cmake.definitions["BUILD_search"] = self.options.module_search
-        self._cmake.definitions["BUILD_segmentation"] = self.options.module_segmentation
-        self._cmake.definitions["BUILD_simulation"] = self.options.module_simulation
-        self._cmake.definitions["BUILD_stereo"] = self.options.module_stereo
-        self._cmake.definitions["BUILD_surface"] = self.options.module_surface
-        self._cmake.definitions["BUILD_surface_on_nurbs"] = self.options.module_surface_on_nurbs
-        self._cmake.definitions["BUILD_tracking"] = self.options.module_tracking
-        self._cmake.definitions["BUILD_visualization"] = self.options.module_visualization
+        tc.variables["BUILD_2d"] = self.options.module_2d
+        tc.variables["BUILD_common"] = True  # Always build at least common
+        tc.variables["BUILD_CUDA"] = self.options.module_cuda
+        tc.variables["BUILD_features"] = self.options.module_features
+        tc.variables["BUILD_filters"] = self.options.module_filters
+        tc.variables["BUILD_geometry"] = self.options.module_geometry
+        tc.variables["BUILD_GPU"] = self.options.module_gpu
+        tc.variables["BUILD_io"] = self.options.module_io
+        tc.variables["BUILD_kdtree"] = self.options.module_kdtree
+        tc.variables["BUILD_keypoints"] = self.options.module_keypoints
+        tc.variables["BUILD_ml"] = self.options.module_ml
+        tc.variables["BUILD_octree"] = self.options.module_octree
+        tc.variables["BUILD_outofcore"] = self.options.module_outofcore
+        tc.variables["BUILD_people"] = self.options.module_people
+        tc.variables["BUILD_recognition"] = self.options.module_recognition
+        tc.variables["BUILD_registration"] = self.options.module_registration
+        tc.variables["BUILD_sample_consensus"] = self.options.module_sample_consensus
+        tc.variables["BUILD_search"] = self.options.module_search
+        tc.variables["BUILD_segmentation"] = self.options.module_segmentation
+        tc.variables["BUILD_simulation"] = self.options.module_simulation
+        tc.variables["BUILD_stereo"] = self.options.module_stereo
+        tc.variables["BUILD_surface"] = self.options.module_surface
+        tc.variables["BUILD_surface_on_nurbs"] = self.options.module_surface_on_nurbs
+        tc.variables["BUILD_tracking"] = self.options.module_tracking
+        tc.variables["BUILD_visualization"] = self.options.module_visualization
 
         # Configure dependencies as needed
-        self._cmake.definitions["WITH_CUDA"] = self.options.with_cuda
-        self._cmake.definitions["WITH_DAVIDSDK"] = self.options.with_davidsdk
-        self._cmake.definitions["WITH_DSSDK"] = self.options.with_dssdk
-        self._cmake.definitions["WITH_ENSENSO"] = self.options.with_ensenso
-        self._cmake.definitions["WITH_LIBUSB"] = self.options.with_libusb
-        self._cmake.definitions["WITH_OPENGL"] = self.options.with_opengl
-        self._cmake.definitions["WITH_OPENNI"] = self.options.with_openni
-        self._cmake.definitions["WITH_OPENNI2"] = self.options.with_openni2
-        self._cmake.definitions["WITH_PCAP"] = self.options.with_pcap
-        self._cmake.definitions["WITH_PNG"] = self.options.with_libpng
-        self._cmake.definitions["WITH_QHULL"] = self.options.with_qhull
-        self._cmake.definitions["WITH_QT"] = self.options.with_qt
-        self._cmake.definitions["WITH_RSSDK"] = self.options.with_rssdk
-        self._cmake.definitions["WITH_RSSDK2"] = self.options.with_rssdk2
-        self._cmake.definitions["WITH_VTK"] = self.options.with_vtk
+        tc.variables["WITH_CUDA"] = self.options.with_cuda
+        tc.variables["WITH_DAVIDSDK"] = self.options.with_davidsdk
+        tc.variables["WITH_DSSDK"] = self.options.with_dssdk
+        tc.variables["WITH_ENSENSO"] = self.options.with_ensenso
+        tc.variables["WITH_LIBUSB"] = self.options.with_libusb
+        tc.variables["WITH_OPENGL"] = self.options.with_opengl
+        tc.variables["WITH_OPENNI"] = self.options.with_openni
+        tc.variables["WITH_OPENNI2"] = self.options.with_openni2
+        tc.variables["WITH_PCAP"] = self.options.with_pcap
+        tc.variables["WITH_PNG"] = self.options.with_libpng
+        tc.variables["WITH_QHULL"] = self.options.with_qhull
+        tc.variables["WITH_QT"] = self.options.with_qt
+        tc.variables["WITH_RSSDK"] = self.options.with_rssdk
+        tc.variables["WITH_RSSDK2"] = self.options.with_rssdk2
+        tc.variables["WITH_VTK"] = self.options.with_vtk
+        
+        tc.generate()
 
-        self._cmake.configure(build_folder=self._build_subfolder)
-        return self._cmake
+        deps = CMakeDeps(self)
+        deps.generate()
 
     def build(self):
-        cmake = self._configure_cmake()
+        cmake = CMake(self)
+        cmake.configure(build_script_folder = self.export_sources_folder)
         cmake.build()
 
     def package(self):
-        cmake = self._configure_cmake()
+        copy(self, "LICENSE.txt", dst=os.path.join(self.package_folder, "licenses"), src=self.source_folder)
+        cmake = CMake(self)
         cmake.install()
-        cmake.patch_config_paths()
-
-        self.copy("LICENSE.txt", src=self._source_subfolder, dst="licenses")
 
     def package_info(self):
         self.cpp_info.names["cmake_find_package"] = "PCL"
         self.cpp_info.names["cmake_find_package_multi"] = "PCL"
-        self.cpp_info.libs = tools.collect_libs(self)
 
         if self.settings.os != "Android":
             version_short = ".".join(self.version.split(".")[:2])

@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 2.8.11)
 project(cmake_wrapper)
 
-include(conanbuildinfo.cmake)
-conan_basic_setup()
+find_package(flann REQUIRED)
+add_library(FLANN::FLANN ALIAS flann::flann)
 
-if (CONAN_COMPILE_DEFINITIONS_FLANN MATCHES "FLANN_STATIC")
-    set(FLANN_USE_STATIC ON)
+if(MSVC)
+    add_compile_options(/bigobj)
 endif()
 
-add_subdirectory(source_subfolder)
+add_subdirectory(${PCL_SRC_DIR})
