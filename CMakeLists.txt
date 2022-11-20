@@ -8,4 +8,4 @@ if(MSVC)
     add_compile_options(/bigobj)
 endif()
 
-add_subdirectory(${PCL_SRC_DIR})
+add_subdirectory(${PCL_SRC_DIR} ${CONAN_FOLDERS_SOURCE})

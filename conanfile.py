@@ -195,6 +195,7 @@ class LibPclConan(ConanFile):
     def generate(self):
         tc = CMakeToolchain(self)
         tc.variables["PCL_SRC_DIR"] = self.source_folder.replace("\\", "/")
+        tc.variables["CONAN_FOLDERS_SOURCE"] = self.folders.source
         tc.variables["PCL_SHARED_LIBS"] = self.options.shared
         tc.variables["PCL_BUILD_WITH_BOOST_DYNAMIC_LINKING_WIN32"] = self.options["boost"].shared
         tc.variables["PCL_BUILD_WITH_FLANN_DYNAMIC_LINKING_WIN32"] = self.options["flann"].shared
@@ -272,6 +273,7 @@ class LibPclConan(ConanFile):
     def package_info(self):
         self.cpp_info.names["cmake_find_package"] = "PCL"
         self.cpp_info.names["cmake_find_package_multi"] = "PCL"
+        self.cpp_info.libs = files.collect_libs(self)
 
         if self.settings.os != "Android":
             version_short = ".".join(self.version.split(".")[:2])
